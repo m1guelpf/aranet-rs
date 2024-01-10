@@ -11,7 +11,7 @@
 ```rust
 let device = aranet::connect().await?;
 
-let measurements = device.read_data().await?;
+let measurements = device.measurements().await?;
 
 dbg!(measurements);
 // [src/main.rs:6] measurements = SensorData {

@@ -77,13 +77,30 @@ pub async fn connect() -> Result<Aranet4, ConnectionError> {
     })
 }
 
-/// Data read from the Aranet4 device
+/// Information about the Aranet4 device
+#[derive(Debug)]
+pub struct Info {
+    /// The device's model number
+    pub model_number: String,
+    /// The device's serial number
+    pub serial_number: String,
+    /// The device's firmware revision
+    pub firmware_revision: String,
+    /// The device's hardware revision
+    pub hardware_revision: String,
+    /// The device's software revision
+    pub software_revision: String,
+    /// The name of the device's manufacturer
+    pub manufacturer_name: String,
+}
+
+/// Measurements from the Aranet4 device
 #[derive(Debug)]
 pub struct SensorData {
     // CO2 concentration in ppm
     pub co2: u16,
     // CO2 concentration status
-    pub status: Semaphore,
+    pub status: Status,
     // Percentage of battery remaining
     pub battery: u8,
     // Percentage of relative humidity
@@ -100,18 +117,18 @@ pub struct SensorData {
 
 /// CO2 concentration status, as displayed by the device
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum Semaphore {
+pub enum Status {
     GREEN = 1,
     AMBER = 2,
     RED = 3,
 }
 
-impl From<u8> for Semaphore {
+impl From<u8> for Status {
     fn from(value: u8) -> Self {
         match value {
-            1 => Semaphore::GREEN,
-            2 => Semaphore::AMBER,
-            3 => Semaphore::RED,
+            1 => Status::GREEN,
+            2 => Status::AMBER,
+            3 => Status::RED,
             _ => panic!("invalid semaphore value"),
         }
     }
@@ -120,15 +137,95 @@ impl From<u8> for Semaphore {
 /// Errors that can occur when reading data from an Aranet4 device
 #[derive(Debug, thiserror::Error)]
 pub enum DeviceError {
+    #[error("Attribute {0} was not broadcasted by the device.")]
+    MissingAttribute(&'static str),
+
+    #[error("The device broadcasted an invalid value.")]
+    InvalidAttribute(#[from] std::string::FromUtf8Error),
+
     #[error(transparent)]
     IO(#[from] std::io::Error),
+
     #[error(transparent)]
     BTLE(#[from] btleplug::Error),
 }
 
 impl Aranet4 {
-    /// Read data from the device
-    pub async fn read_data(&self) -> Result<SensorData, DeviceError> {
+    /// Get the device information
+    pub async fn info(&self) -> Result<Info, DeviceError> {
+        if !self.device.is_connected().await? {
+            self.reconnect().await?;
+        }
+
+        let mut model_number = None;
+        let mut serial_number = None;
+        let mut firmware_revision = None;
+        let mut hardware_revision = None;
+        let mut software_revision = None;
+        let mut manufacturer_name = None;
+
+        for characteristic in self.device.characteristics() {
+            match characteristic.uuid.to_string().as_str() {
+                "00002a24-0000-1000-8000-00805f9b34fb" => {
+                    let res = self.device.read(&characteristic).await?;
+                    model_number = Some(String::from_utf8(res)?.trim_end_matches('\0').to_string());
+                }
+                "00002a25-0000-1000-8000-00805f9b34fb" => {
+                    let res = self.device.read(&characteristic).await?;
+                    serial_number = Some(String::from_utf8(res)?.to_string());
+                }
+                "00002a26-0000-1000-8000-00805f9b34fb" => {
+                    let res = self.device.read(&characteristic).await?;
+                    firmware_revision = Some(String::from_utf8(res)?.to_string());
+                }
+                "00002a27-0000-1000-8000-00805f9b34fb" => {
+                    let res = self.device.read(&characteristic).await?;
+                    hardware_revision = Some(String::from_utf8(res)?.to_string());
+                }
+                "00002a28-0000-1000-8000-00805f9b34fb" => {
+                    let res = self.device.read(&characteristic).await?;
+                    software_revision = Some(String::from_utf8(res)?.to_string());
+                }
+                "00002a29-0000-1000-8000-00805f9b34fb" => {
+                    let res = self.device.read(&characteristic).await?;
+                    manufacturer_name =
+                        Some(String::from_utf8(res)?.trim_end_matches('\0').to_string());
+                }
+                _ => {}
+            }
+        }
+
+        let Some(model_number) = model_number else {
+            return Err(DeviceError::MissingAttribute("model_number"));
+        };
+        let Some(serial_number) = serial_number else {
+            return Err(DeviceError::MissingAttribute("serial_number"));
+        };
+        let Some(firmware_revision) = firmware_revision else {
+            return Err(DeviceError::MissingAttribute("firmware_revision"));
+        };
+        let Some(hardware_revision) = hardware_revision else {
+            return Err(DeviceError::MissingAttribute("hardware_revision"));
+        };
+        let Some(software_revision) = software_revision else {
+            return Err(DeviceError::MissingAttribute("software_revision"));
+        };
+        let Some(manufacturer_name) = manufacturer_name else {
+            return Err(DeviceError::MissingAttribute("manufacturer_name"));
+        };
+
+        Ok(Info {
+            model_number,
+            serial_number,
+            firmware_revision,
+            hardware_revision,
+            software_revision,
+            manufacturer_name,
+        })
+    }
+
+    /// Get the current measurements from the device
+    pub async fn measurements(&self) -> Result<SensorData, DeviceError> {
         if !self.device.is_connected().await? {
             self.reconnect().await?;
         }
@@ -150,7 +247,7 @@ impl Aranet4 {
             humidity,
             pressure,
             temperature,
-            status: Semaphore::from(status),
+            status: Status::from(status),
             interval: Duration::from_secs(update_interval as u64),
             since_last_update: Duration::from_secs(since_last_update as u64),
         })
