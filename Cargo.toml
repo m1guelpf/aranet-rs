@@ -1,0 +1,17 @@
+[package]
+name = "aranet"
+license = "MIT"
+edition = "2021"
+version = "0.1.0"
+readme = "README.md"
+keywords = ["aranet", "co2", "air-quality"]
+authors = ["Miguel Piedrafita <rust@miguel.build>"]
+repository = "https://github.com/m1guelpf/aranet-rs"
+description = "Read current measurements from an Aranet4 device."
+
+[dependencies]
+btleplug = "0.11.4"
+byteorder = "1.5.0"
+thiserror = "1.0.56"
+uuid = { version = "1.6.1", features = ["v4"] }
+tokio = { version = "1.35.1", features = ["macros"] }
